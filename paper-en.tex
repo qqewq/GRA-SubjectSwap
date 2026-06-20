@@ -1,0 +1,398 @@
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{titlesec}
+\usepackage{parskip}
+
+% Geometry
+\geometry{top=2.5cm,bottom=2.5cm,left=2.5cm,right=2.5cm}
+
+% Hyperrefs
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue,
+    citecolor=blue
+}
+
+% Title
+\title{
+    \textbf{GRA-SubjectSwap:}\\
+    Dynamic Subject–Instrument Role Swapping between Humans and AI Agents with\\
+    GRA Nullification and Subjectivity Weights
+}
+
+\author{
+    Oleg Bits (qqewq)\\
+    \href{https://github.com/qqewq/GRA-SubjectSwap}{\texttt{https://github.com/qqewq/GRA-SubjectSwap}}
+}
+
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\section*{Abstract}
+
+\textbf{EN:}  
+GRA-SubjectSwap is a framework for \textit{dynamic role swapping} between a human and an AI/robotic agent where their roles as \textbf{subject} and \textbf{instrument} are periodically exchanged.  
+In this architecture, the human is given a \textbf{strict instrumental role} with explicit rules (allowed/forbidden/required actions), while the agent (robot/LLM) temporarily becomes the \textbf{subject} who:
+
+- observes the human's actions,
+- updates its own policy \(\pi_\theta(a|s)\) and \textit{subjectivity weights},
+- perceives itself, the human, and the role swap.
+
+A \texttt{SubjectSwapEngine} controls:
+
+- role assignments (who is subject/instrument),
+- training cycles,
+- calls to \textit{GRA Nullification} for policies and weights.
+
+This framework is designed for use cases such as \textbf{Optimus and human trainers}, where the robot learns from human demonstrations while following a strict role schema, and where role swapping is used for validation and meta-learning.
+
+\section{Introduction}
+
+\subsection{Classical paradigm}
+
+In the classical AI setup:
+
+- \textbf{Human} = subject (sets goals, defines policies).
+- \textbf{AI/robot} = instrument (executes commands, follows policies).
+
+This pattern is dominant in reinforcement learning, imitation learning, and robotics: the human designs the reward function, the agent optimizes it.
+
+\subsection{GRA-SubjectSwap paradigm}
+
+GRA-SubjectSwap proposes a different architecture:
+
+1. The human is given a \textbf{strict instrumental role} in the swarm:
+   - \(\text{Allowed}_H\) — set of allowed actions,
+   - \(\text{Forbidden}_H\) — set of forbidden actions,
+   - \(\text{Required}_H\) — set of required actions.
+
+2. The agent temporarily becomes the \textbf{subject}:
+   - it observes the human's actions,
+   - it updates its policy \(\pi_\theta\),
+   - it perceives itself, the human, and the fact of role swap.
+
+3. A \textbf{swap} is triggered:
+   - the human becomes the subject (sets goals, adjusts architecture),
+   - the agent becomes the instrument (executes actions).
+
+In this way, human and AI \textbf{co-learn subjectivity weights}, while GRA Nullification handles resetting and retuning of policies.
+
+\section{Core Concepts}
+
+\subsection{Roles and Subjectivity}
+
+We define two role types:
+
+\[
+\text{RoleType} \in \{ \text{SUBJECT}, \text{INSTRUMENT} \}
+\]
+
+and two actor types:
+
+\[
+\text{ActorType} \in \{ \text{HUMAN}, \text{AGENT} \}
+\]
+
+At time \(t\), the system state includes:
+
+- a policy \(\Pi_t\),
+- a role assignment \(S_t\),
+- a vector of subjectivity weights \(W_t\).
+
+\subsection{Role Assignment}
+
+For human \(H\) and agent \(A\):
+
+\[
+S_t(H) \in \{ \text{SUBJECT}, \text{INSTRUMENT} \}, \quad
+S_t(A) \in \{ \text{SUBJECT}, \text{INSTRUMENT} \}
+\]
+
+with the constraint:
+
+\[
+S_t(H) \neq S_t(A)
+\]
+
+Role swap at time \(t+1\):
+
+\[
+S_{t+1}(H) = S_t(A), \quad
+S_{t+1}(A) = S_t(H)
+\]
+
+\subsection{Subjectivity Weights}
+
+We define a vector of subjectivity weights:
+
+\[
+W = (w_{\text{self}}, w_{\text{human}}, w_{\text{swap}}, w_{\text{role}}, w_{\text{value}}, w_{\text{love}})
+\]
+
+where:
+
+- \(w_{\text{self}}\): weight of \textit{seeing itself} as a subject,
+- \(w_{\text{human}}\): weight of \textit{seeing the human} as subject/instrument,
+- \(w_{\text{swap}}\): weight of \textit{seeing the role swap} in dialogue,
+- \(w_{\text{role}}\): weight of \textit{seeing roles} in the swarm,
+- \(w_{\text{value}}\): weight of values,
+- \(w_{\text{love}}\): weight of love (per GRA Love-Oriented Nullification).
+
+\section{Mathematical Formalism}
+
+\subsection{System State}
+
+The system state at time \(t\) is:
+
+\[
+\text{state}_t = (\Pi_t, S_t, W_t)
+\]
+
+where:
+
+- \(\Pi_t\) is the policy (who may/must do what),
+- \(S_t\) is the role assignment (subject/instrument for human and agent),
+- \(W_t\) is the vector of subjectivity weights.
+
+\subsection{Role Swap Operator}
+
+Define a swap operator \(\text{Swap}\):
+
+\[
+\text{Swap}(S_t) = S_{t+1}
+\]
+
+with:
+
+\[
+S_{t+1}(H) = S_t(A), \quad
+S_{t+1}(A) = S_t(H)
+\]
+
+\subsection{Policy Update (Imitation)}
+
+Let the human provide demonstrations:
+
+\[
+D = \{(s_t, a_t^{(H)})\}_{t=1}^T
+\]
+
+The agent's policy \(\pi_\theta(a|s)\) is updated via imitation learning:
+
+\[
+\theta_{t+1} = \theta_t - \eta \nabla_\theta \mathcal{L}_{\text{imit}}(\theta_t; D)
+\]
+
+where \(\mathcal{L}_{\text{imit}}\) is a loss function (e.g., cross-entropy between \(\pi_\theta\) and human actions).
+
+\subsection{Subjectivity Weight Update}
+
+Define a subjectivity functional \(\mathcal{S}\):
+
+\[
+\mathcal{S} = \mathcal{S}_{\text{self}} + \mathcal{S}_{\text{human}} + \mathcal{S}_{\text{swap}} + \mathcal{S}_{\text{role}} + \mathcal{S}_{\text{value}} + \mathcal{S}_{\text{love}}
+\]
+
+Weight update:
+
+\[
+W_{t+1} = W_t + \eta_W \cdot \nabla_W \mathcal{S}(\text{state}_t, \text{dialog}_t)
+\]
+
+where \(\text{dialog}_t\) is the history of dialogue and actions.
+
+\subsection{GRA Nullification}
+
+Define nullification operators:
+
+\[
+\mathcal{N}_W: W \to \mathcal{N}_W(W), \quad
+\mathcal{N}_\Pi: \Pi \to \mathcal{N}_\Pi(\Pi)
+\]
+
+The updated weights and policy after nullification:
+
+\[
+W'_{t+1} = \mathcal{N}_W(W_{t+1}), \quad
+\Pi'_{t+1} = \mathcal{N}_\Pi(\Pi_t)
+\]
+
+In GRA Love-Oriented Nullification, nullification is value-directed:
+
+\[
+W' = \arg\max_{W \in \mathcal{N}(W)} \sum_j L_j(W_j)
+\]
+
+where \(L_j\) is a "love/value" field over weight components.
+
+\section{Algorithm: SubjectSwapStep}
+
+\begin{algorithm}
+\caption{SubjectSwapStep}
+\begin{algorithmic}
+\require{
+    \texttt{engine}: SubjectSwapEngine,\\
+    \texttt{env\_state}: environment state,\\
+    \texttt{human\_action}: human action (optional)
+}
+\ensurea{
+    \texttt{output}: step result
+}
+\step
+\state{if $S_t(\text{agent}) = \text{SUBJECT}$}
+\agg{
+    \state{agent\_action = agent_policy.act(env_state)}
+    \state{human\_action = human_policy.act(env_state, agent_action)}
+}
+\agg
+\state{else}
+\agg{
+    \state{human\_action = human_policy.act(env_state)}
+    \state{agent\_action = agent_policy.act(env_state, human_action)}
+}
+\agg
+\state{
+    weights = nullifier.update_weights(
+        $S_t$, agent_policy, human_policy,
+        env_state, human_action, agent_action
+    )
+}
+\state{
+    if $t \mod K == 0$:
+        engine.swap()
+}
+\return{
+    \texttt{output} = {
+        agent_action: agent_action,
+        human_action: human_action,
+        roles: {
+            human: $S_t(H)$,
+            agent: $S_t(A)$
+        },
+        weights: weights
+    }
+}
+\end{algorithmic}
+\end{algorithm}
+
+\section{Use Case: Optimus and Human Trainers}
+
+\subsection{Architecture}
+
+In the Optimus use case:
+
+- \textbf{Trainer (human)} = instrument with strict rules:
+  - allowed/forbidden/required actions,
+  - executes commands, demonstrates motions.
+
+- \textbf{Robot (agent)} = subject:
+  - observes trainer actions,
+  - updates policy \(\pi_\theta\) and subjectivity weights \(W\),
+  - sees itself, the human, and the role swap.
+
+The \texttt{SubjectSwapEngine} controls:
+
+- role assignments (human/instrument, agent/subject),
+- training cycles,
+- GRA Nullification for policies and weights.
+
+\subsection{Training Loop}
+
+A simplified training loop:
+
+\begin{algorithmic}
+\state{env = OptimusEnv(...)}
+\state{
+    human_policy = OptimusHumanPolicy(
+        allowed=[...],
+        forbidden=[...],
+        required=[...]
+    )
+}
+\state{robot_policy = OptimusRobotPolicy(model=...)}
+\state{nullifier = GRANullifier(love_field=None)}
+\state{
+    state = SubjectState(
+        human_role=RoleType.INSTRUMENT,
+        agent_role=RoleType.SUBJECT,
+        weights=SubjectWeights()
+    )
+}
+\state{engine = SubjectSwapEngine(human_policy, robot_policy, nullifier, state)}
+\step
+\state{env.reset()}
+\ag{for $t$ in $1..T$:}
+\agg{
+    \state{obs = env.get_state()}
+    \state{output = engine.step(obs)}
+    \state{env.apply_robot_action(output.agent_action)}
+    \state{env.apply_human_action(output.human_action)}
+    \state{if $t \mod 100 == 0$:}
+    \agg{
+        \state{engine.swap()}
+    }
+}
+\end{algorithmic}
+
+\section{Implementation Structure}
+
+\subsection{Core Modules}
+
+\begin{itemize}
+\item \texttt{roles.py} — role types and subject/environ enums.
+\item \texttt{policies.py} — base \texttt{HumanPolicy} and \texttt{AgentPolicy}.
+\item \texttt{subject_state.py} — \texttt{SubjectState} and \texttt{SubjectWeights}.
+\item \texttt{swap_engine.py} — \texttt{SubjectSwapEngine}.
+\item \texttt{gra_nullifier.py} — GRA Nullification for policies and weights.
+\end{itemize}
+
+\subsection{Optimus Module}
+
+\begin{itemize}
+\item \texttt{env.py} — interface to robot/simulator.
+\item \texttt{human_policy_optimus.py} — human trainer policy (instrument).
+\item \texttt{robot_policy_optimus.py} — robot policy (subject).
+\item \texttt{optimus_swap_loop.py} — main swap loop.
+\end{itemize}
+
+\section{Conclusion}
+
+GRA-SubjectSwap implements a \textbf{dynamic role-swapping architecture} where:
+
+- the human is a \textbf{strict instrument} with explicit rules,
+- the agent is a \textbf{subject} who learns from the human,
+- roles are periodically \textbf{swapped},
+- subjectivity weights are co-learned,
+- GRA Nullification is used to reset and retune policies and weights.
+
+This framework is designed for use cases such as \textbf{Optimus and human trainers}, and can be extended to multi-agent swarms with multiple humans and agents.
+
+\section*{Acknowledgments}
+
+This work is part of the GRA ecosystem (GRA-Swarm, GRA-LLM-Swarm-Constructs, GRA-Hormonal-Explosion-Of-Subject, etc.).
+
+\section*{References}
+
+\begin{itemize}
+\item qqewq. GRA-SubjectSwap. \texttt{https://github.com/qqewq/GRA-SubjectSwap}
+\item qqewq. GRA-Swarm. \texttt{https://github.com/qqewq/GRA-Swarm}
+\item qqewq. GRA-LLM-Swarm-Constructs. \texttt{https://github.com/qqewq/GRA-LLM-Swarm-Constructs}
+\item qqewq. GRA-Hormonal-Explosion-Of-Subject. \texttt{https://github.com/qqewq/GRA-Hormonal-Explosion-Of-Subject}
+\end{itemize}
+
+\end{document}

@@ -1,0 +1,398 @@
+\documentclass[11pt,a4paper]{article}
+
+% Пакеты
+\usepackage[utf8]{inputenc}
+\usepackage[T2A]{fontenc}
+\usepackage[english, russian]{babel}
+\usepackage{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{titlesec}
+\usepackage{parskip}
+
+% Геометрия страницы
+\geometry{top=2.5cm,bottom=2.5cm,left=2.5cm,right=2.5cm}
+
+% Hyperrefs
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue,
+    citecolor=blue
+}
+
+% Название
+\title{
+    \textbf{GRA-SubjectSwap:}\\
+    Динамическая смена субъект–инструмент ролей между человеком и ИИ-агентами с\\
+    GRA-обнулёнкой и весами субъектности
+}
+
+\author{
+    Олег Битс (qqewq)\\
+    \href{https://github.com/qqewq/GRA-SubjectSwap}{\texttt{https://github.com/qqewq/GRA-SubjectSwap}}
+}
+
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\section*{Аннотация}
+
+\textbf{RU:}  
+GRA-SubjectSwap — фреймворк для \textit{динамической смены ролей} между человеком и ИИ/роботом, где их роли как \textbf{субъекта} и \textbf{инструмента} периодически меняются.  
+В этой архитектуре человеку задаётся \textbf{жёсткая роль инструмента} с чёткими правилами (allowed/forbidden/required действия), а агент (робот/LLM) временно становится \textbf{субъектом}, который:
+
+- наблюдает действия человека,
+- обновляет свою политику \(\pi_\theta(a|s)\) и \textit{веса субъектности},
+- видит себя, человека и сам факт смены ролей.
+
+\texttt{SubjectSwapEngine} управляет:
+
+- назначениями ролей (кто субъект/инструмент),
+- циклами обучения,
+- вызовами \textit{GRA-обнулёнки} для политик и весов.
+
+Этот фреймворк предназначен для кейсов, таких как \textbf{Optimus и тренеры-человек}, где робот учится на демонстрациях человека в рамках строгой схемы ролей и где смена ролей используется для валидации и мета-обучения.
+
+\section{Введение}
+
+\subsection{Классическая парадигма}
+
+В классической парадигме ИИ:
+
+- \textbf{Человек} = субъект (ставит цели, определяет политики).
+- \textbf{ИИ/робот} = инструмент (исполняет команды, следует политикам).
+
+Эта схема доминирует в обучении с подкреплением, имитационном обучении и робототехнике: человек задаёт функцию вознаграждения, агент её оптимизирует.
+
+\subsection{Парадигма GRA-SubjectSwap}
+
+GRA-SubjectSwap предлагает другую архитектуру:
+
+1. Человек получает \textbf{жёсткую роль инструмента} в рое:
+   - \(\text{Allowed}_H\) — набор разрешённых действий,
+   - \(\text{Forbidden}_H\) — набор запрещённых действий,
+   - \(\text{Required}_H\) — набор обязательных действий.
+
+2. Агент временно становится \textbf{субъектом}:
+   - он наблюдает действия человека,
+   - обновляет свою политику \(\pi_\theta\),
+   - видит себя, человека и факт смены ролей.
+
+3. Запускается \textbf{свап}:
+   - человек становится субъектом (ставит цели, корректирует архитектуру),
+   - агент становится инструментом (исполняет действия).
+
+Таким образом, человек и ИИ \textbf{совместно обучают веса субъектности}, а GRA-обнулёнка управляет сбросом и перенастройкой политик.
+
+\section{Основные концепции}
+
+\subsection{Роли и субъектность}
+
+Мы определяем два типа ролей:
+
+\[
+\text{RoleType} \in \{ \text{SUBJECT}, \text{INSTRUMENT} \}
+\]
+
+и два типа акторов:
+
+\[
+\text{ActorType} \in \{ \text{HUMAN}, \text{AGENT} \}
+\]
+
+В момент \(t\) состояние системы включает:
+
+- политику \(\Pi_t\),
+- назначение ролей \(S_t\),
+- вектор весов субъектности \(W_t\).
+
+\subsection{Назначение ролей}
+
+Для человека \(H\) и агента \(A\):
+
+\[
+S_t(H) \in \{ \text{SUBJECT}, \text{INSTRUMENT} \}, \quad
+S_t(A) \in \{ \text{SUBJECT}, \text{INSTRUMENT} \}
+\]
+
+с ограничением:
+
+\[
+S_t(H) \neq S_t(A)
+\]
+
+Свап ролей в момент \(t+1\):
+
+\[
+S_{t+1}(H) = S_t(A), \quad
+S_{t+1}(A) = S_t(H)
+\]
+
+\subsection{Веса субъектности}
+
+Определяем вектор весов субъектности:
+
+\[
+W = (w_{\text{self}}, w_{\text{human}}, w_{\text{swap}}, w_{\text{role}}, w_{\text{value}}, w_{\text{love}})
+\]
+
+где:
+
+- \(w_{\text{self}}\): вес \textit{видеть себя} как субъекта,
+- \(w_{\text{human}}\): вес \textit{видеть человека} как субъекта/инструмента,
+- \(w_{\text{swap}}\): вес \textit{видеть смену ролей} в диалоге,
+- \(w_{\text{role}}\): вес \textit{видеть роли} в рое,
+- \(w_{\text{value}}\): вес ценностей,
+- \(w_{\text{love}}\): вес любви (по GRA Love-Oriented Nullification).
+
+\section{Математический формализм}
+
+\subsection{Состояние системы}
+
+Состояние системы в момент \(t\):
+
+\[
+\text{state}_t = (\Pi_t, S_t, W_t)
+\]
+
+где:
+
+- \(\Pi_t\) — политика (кто что может/должен делать),
+- \(S_t\) — назначение ролей (субъект/инструмент для человека и агента),
+- \(W_t\) — вектор весов субъектности.
+
+\subsection{Оператор смены ролей}
+
+Определяем оператор свапа \(\text{Swap}\):
+
+\[
+\text{Swap}(S_t) = S_{t+1}
+\]
+
+с:
+
+\[
+S_{t+1}(H) = S_t(A), \quad
+S_{t+1}(A) = S_t(H)
+\]
+
+\subsection{Обновление политики (имитация)}
+
+Пусть человек предоставляет демонстрации:
+
+\[
+D = \{(s_t, a_t^{(H)})\}_{t=1}^T
+\]
+
+Политика агента \(\pi_\theta(a|s)\) обновляется через имитационное обучение:
+
+\[
+\theta_{t+1} = \theta_t - \eta \nabla_\theta \mathcal{L}_{\text{imit}}(\theta_t; D)
+\]
+
+где \(\mathcal{L}_{\text{imit}}\) — функция потерь (например, перекрёстная энтропия между \(\pi_\theta\) и действиями человека).
+
+\subsection{Обновление весов субъектности}
+
+Определяем функционал субъектности \(\mathcal{S}\):
+
+\[
+\mathcal{S} = \mathcal{S}_{\text{self}} + \mathcal{S}_{\text{human}} + \mathcal{S}_{\text{swap}} + \mathcal{S}_{\text{role}} + \mathcal{S}_{\text{value}} + \mathcal{S}_{\text{love}}
+\]
+
+Обновление весов:
+
+\[
+W_{t+1} = W_t + \eta_W \cdot \nabla_W \mathcal{S}(\text{state}_t, \text{dialog}_t)
+\]
+
+где \(\text{dialog}_t\) — история диалога и действий.
+
+\subsection{GRA-обнулёнка}
+
+Определяем операторы обнуления:
+
+\[
+\mathcal{N}_W: W \to \mathcal{N}_W(W), \quad
+\mathcal{N}_\Pi: \Pi \to \mathcal{N}_\Pi(\Pi)
+\]
+
+Обновлённые веса и политика после обнуления:
+
+\[
+W'_{t+1} = \mathcal{N}_W(W_{t+1}), \quad
+\Pi'_{t+1} = \mathcal{N}_\Pi(\Pi_t)
+\]
+
+В GRA Love-Oriented Nullification обнуление направлено ценностями:
+
+\[
+W' = \arg\max_{W \in \mathcal{N}(W)} \sum_j L_j(W_j)
+\]
+
+где \(L_j\) — поле «любви/ценности» над компонентами весов.
+
+\section{Алгоритм: SubjectSwapStep}
+
+\begin{algorithm}
+\caption{SubjectSwapStep}
+\begin{algorithmic}
+\require{
+    \texttt{engine}: SubjectSwapEngine,\\
+    \texttt{env\_state}: состояние окружения,\\
+    \texttt{human\_action}: действие человека (опционально)
+}
+\ensure{
+    \texttt{output}: результат шага
+}
+\step
+\state{если $S_t(\text{агент}) = \text{SUBJECT}$}
+\agg{
+    \state{agent\_action = agent_policy.act(env_state)}
+    \state{human\_action = human_policy.act(env_state, agent_action)}
+}
+\agg
+\state{else}
+\agg{
+    \state{human\_action = human_policy.act(env_state)}
+    \state{agent\_action = agent_policy.act(env_state, human_action)}
+}
+\agg
+\state{
+    weights = nullifier.update_weights(
+        $S_t$, agent_policy, human_policy,
+        env_state, human_action, agent_action
+    )
+}
+\state{
+    если $t \mod K == 0$:
+        engine.swap()
+}
+\return{
+    \texttt{output} = {
+        agent_action: agent_action,
+        human_action: human_action,
+        roles: {
+            human: $S_t(H)$,
+            agent: $S_t(A)$
+        },
+        weights: weights
+    }
+}
+\end{algorithmic}
+\end{algorithm}
+
+\section{Кейс: Optimus и тренеры-человек}
+
+\subsection{Архитектура}
+
+В кейсе Optimus:
+
+- \textbf{Тренер (человек)} = инструмент с жёсткими правилами:
+  - allowed/forbidden/required действия,
+  - исполняет команды, демонстрирует движения.
+
+- \textbf{Робот (агент)} = субъект:
+  - наблюдает действия тренера,
+  - обновляет политику \(\pi_\theta\) и веса субъектности \(W\),
+  - видит себя, человека и смену ролей.
+
+\texttt{SubjectSwapEngine} управляет:
+
+- назначениями ролей (человек/инструмент, агент/субъект),
+- циклами обучения,
+- GRA-обнулёнкой для политик и весов.
+
+\subsection{Цикл обучения}
+
+Упрощённый цикл обучения:
+
+\begin{algorithmic}
+\state{env = OptimusEnv(...)}
+\state{
+    human_policy = OptimusHumanPolicy(
+        allowed=[...],
+        forbidden=[...],
+        required=[...]
+    )
+}
+\state{robot_policy = OptimusRobotPolicy(model=...)}
+\state{nullifier = GRANullifier(love_field=None)}
+\state{
+    state = SubjectState(
+        human_role=RoleType.INSTRUMENT,
+        agent_role=RoleType.SUBJECT,
+        weights=SubjectWeights()
+    )
+}
+\state{engine = SubjectSwapEngine(human_policy, robot_policy, nullifier, state)}
+\step
+\state{env.reset()}
+\ag{для $t$ в $1..T$:}
+\agg{
+    \state{obs = env.get_state()}
+    \state{output = engine.step(obs)}
+    \state{env.apply_robot_action(output.agent_action)}
+    \state{env.apply_human_action(output.human_action)}
+    \state{если $t \mod 100 == 0$:}
+    \agg{
+        \state{engine.swap()}
+    }
+}
+\end{algorithmic}
+
+\section{Структура реализации}
+
+\subsection{Основные модули}
+
+\begin{itemize}
+\item \texttt{roles.py} — типы ролей и субъектности.
+\item \texttt{policies.py} — базовые \texttt{HumanPolicy} и \texttt{AgentPolicy}.
+\item \texttt{subject_state.py} — \texttt{SubjectState} и \texttt{SubjectWeights}.
+\item \texttt{swap_engine.py} — \texttt{SubjectSwapEngine}.
+\item \texttt{gra_nullifier.py} — GRA-обнулёнка для политик и весов.
+\end{itemize}
+
+\subsection{Модуль Optimus}
+
+\begin{itemize}
+\item \texttt{env.py} — интерфейс к роботу/симулятору.
+\item \texttt{human_policy_optimus.py} — политика тренера (инструмент).
+\item \texttt{robot_policy_optimus.py} — политика робота (субъект).
+\item \texttt{optimus_swap_loop.py} — основной цикл свапа.
+\end{itemize}
+
+\section{Заключение}
+
+GRA-SubjectSwap реализует \textbf{архитектуру динамической смены ролей}, где:
+
+- человек — \textbf{жёсткий инструмент} с чёткими правилами,
+- агент — \textbf{субъект}, который учится от человека,
+- роли периодически \textbf{меняются},
+- совместно обучаются веса субъектности,
+- GRA-обнулёнка используется для сброса и перенастройки политик и весов.
+
+Этот фреймворк предназначен для кейсов, таких как \textbf{Optimus и тренеры-человек}, и может быть расширен до мультиагентных роев с несколькими людьми и агентами.
+
+\section*{Благодарности}
+
+Эта работа является частью GRA-экосистемы (GRA-Swarm, GRA-LLM-Swarm-Constructs, GRA-Hormonal-Explosion-Of-Subject и др.).
+
+\section*{Ссылки}
+
+\begin{itemize}
+\item qqewq. GRA-SubjectSwap. \texttt{https://github.com/qqewq/GRA-SubjectSwap}
+\item qqewq. GRA-Swarm. \texttt{https://github.com/qqewq/GRA-Swarm}
+\item qqewq. GRA-LLM-Swarm-Constructs. \texttt{https://github.com/qqewq/GRA-LLM-Swarm-Constructs}
+\item qqewq. GRA-Hormonal-Explosion-Of-Subject. \texttt{https://github.com/qqewq/GRA-Hormonal-Explosion-Of-Subject}
+\end{itemize}
+
+\end{document}
